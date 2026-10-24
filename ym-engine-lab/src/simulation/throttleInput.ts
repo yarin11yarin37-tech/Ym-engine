@@ -8,11 +8,13 @@
  * accelerator" bug where a lost pointerup leaves the engine revving.
  */
 export class ThrottleInput {
-  private readonly sources = new Set<string>();
+  /** Each active source and how far it presses (0..1). */
+  private readonly sources = new Map<string, number>();
   private override: number | null = null;
 
-  press(sourceId: string): void {
-    this.sources.add(sourceId);
+  /** Press (or move) a source. `level` lets a finger hold a partial pedal position. */
+  press(sourceId: string, level = 1): void {
+    this.sources.set(sourceId, Math.min(1, Math.max(0, Number.isFinite(level) ? level : 1)));
   }
 
   release(sourceId: string): void {
@@ -39,7 +41,11 @@ export class ThrottleInput {
 
   /** Target throttle 0..1 requested by the driver. */
   get target(): number {
-    if (this.sources.size > 0) return 1;
+    if (this.sources.size > 0) {
+      let max = 0;
+      this.sources.forEach((v) => (max = Math.max(max, v)));
+      return max;
+    }
     return this.override ?? 0;
   }
 }

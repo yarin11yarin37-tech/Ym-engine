@@ -28,7 +28,11 @@ npm run check      # all of the above
 
 Location only works on `https://` or `localhost`. To test Driving mode on a phone, deploy (below) or use an HTTPS tunnel.
 
-## Deploy to Vercel
+## Easiest deploy: one file (works from an iPhone)
+
+The `deploy/` folder holds a ready-built copy of the whole app: `index.html` (everything inlined) and `vercel.json` (static hosting, no build). Upload those two files to the **root** of the GitHub repository and set Vercel's Root Directory to empty. To update later, upload the new `index.html` to the same place; GitHub replaces it and Vercel publishes automatically. The version and build time show next to the name at the top of the app.
+
+## Deploy to Vercel (from source)
 
 1. Push this folder to a GitHub repository.
 2. On vercel.com: **Add New → Project**, import the repo. Vercel detects Vite; `vercel.json` already sets the build command (`npm run build`) and output (`dist`).
@@ -63,6 +67,18 @@ HTTPS is required: browsers block geolocation on plain `http://` pages, so Drivi
 **Driving mode.** GPS speed is filtered (accuracy threshold 35 m, plausibility and acceleration limits, smoothing, short dead-reckoning between 1 Hz fixes). RPM comes from speed × virtual gear ratio × final drive ÷ tyre circumference; load is estimated from acceleration. Shifting uses throttle-dependent up/down lines with hysteresis, minimum dwell and kickdown. After 4.5 s without a valid fix the sound fades to idle and speed shows "—". Location stays in memory on the device and the watcher stops when you leave Driving mode or hide the tab. The virtual gearbox is forced to automatic while driving, and nothing on that screen needs touching on the move.
 
 **Stuck-pedal protection.** The pedal releases on pointer up/cancel/lost-capture, long-press menu, window blur, tab hide, page hide and unmount; keyboard keys release on keyup and blur.
+
+## iPhone with the motion sensor (fastest response)
+
+Open the site in Safari on an iPhone mounted in the car and connected to the car's Bluetooth audio. Choose **Driving** and tap **Start engine**; allow Location and Motion & Orientation when asked. Drive normally: after a few clear accelerations or brakings the app learns which way the phone faces and from then on reacts to braking and acceleration within a few tenths of a second, while GPS keeps the speed accurate. Keep the phone fixed in its mount; if it moves, tap "Learn its direction again". Hold the phone sideways for the Tesla-style one-screen layout. The Tesla browser has no motion sensor, so there the sound follows GPS only.
+
+If motion access was refused: Settings → Apps → Safari → Motion & Orientation Access.
+
+## Demo controls
+
+- **Gas amount**: pick 25 / 50 / 75 / 100 % (or any value on the slider); a pedal press gives exactly that, and dragging up or down while pressing changes it.
+- **Shift while holding the gas**: keep one finger on the pedal and tap Up / Down with another. The paddles react on touch-down; from Free rev the first Up selects 1st gear, and in Auto a tap switches to Manual.
+- **Exhaust modes**: Comfort (quieter, few pops), Sport, Track (louder, rawer, more pops on lift-off).
 
 ## Adding licensed engine recordings
 

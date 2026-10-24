@@ -54,7 +54,7 @@ export function StartScreen() {
             onChange={(m) => c.setMode(m)}
             options={[
               { value: 'demo', label: 'Parked demo', hint: 'Virtual pedal, works anywhere' },
-              { value: 'driving', label: 'Driving', hint: 'Follows GPS speed while you drive' },
+              { value: 'driving', label: 'Driving', hint: 'Follows your real driving (GPS + phone sensor)' },
             ]}
           />
         </div>
@@ -80,7 +80,9 @@ export function StartScreen() {
         </div>
 
         <footer className="start__foot">
-          <p>{BRAND.disclaimer}</p>
+          <p>
+            {BRAND.disclaimer} Version {BRAND.version}{BRAND.build ? `, built ${BRAND.build}` : ''}.
+          </p>
           <button type="button" className="linkbtn" onClick={() => setDiag(true)}>
             Compatibility check
           </button>

@@ -5,8 +5,10 @@
  * graph and canvas readers. React receives a throttled snapshot (~12 Hz) plus
  * immediate snapshots on discrete changes (gear, status, mode…).
  */
-import { AudioEngine, type AudioStatus, type VoiceKind } from '../features/audio/AudioEngine';
+import { AudioEngine, type AudioStatus, type ExhaustMode, type VoiceKind } from '../features/audio/AudioEngine';
 import { GpsTracker, type GpsStatus } from '../features/driving-mode/gpsTracker';
+import { MotionSensor, type MotionStatus } from '../features/driving-mode/motionSensor';
+import { SpeedFusion } from '../features/driving-mode/speedFusion';
 import { DEFAULT_VEHICLE_ID, getVehicle } from '../data/vehicles';
 import { EngineSimulator } from '../simulation/EngineSimulator';
 import type { DemoDrive, ShiftControl, SimulationMode, SimulationState, VehicleProfile } from '../simulation/types';
@@ -19,7 +21,14 @@ export interface UiSnapshot {
   audioError: string | null;
   gpsStatus: GpsStatus;
   gpsAccuracy: number | null;
-  gpsConsent: boolean;
+  gpsError: string | null;
+  gpsLowAccuracy: boolean;
+  motionStatus: MotionStatus;
+  motionConfidence: number;
+  /** Throttle a pedal press gives in Parked demo (0.1..1). */
+  pedalLevel: number;
+  exhaustMode: ExhaustMode;
+  gpsStats: { intervalMs: number | null; speedSource: 'device' | 'position' | 'none'; fixes: number };
   volume: number;
   started: boolean;
 }
@@ -31,10 +40,13 @@ interface Prefs {
   vehicleId: string;
   volume: number;
   shiftControl: ShiftControl;
+  mode: SimulationMode;
+  pedalLevel: number;
+  exhaustMode: ExhaustMode;
 }
 
 function loadPrefs(): Prefs {
-  const fallback: Prefs = { vehicleId: DEFAULT_VEHICLE_ID, volume: 0.75, shiftControl: 'auto' };
+  const fallback: Prefs = { vehicleId: DEFAULT_VEHICLE_ID, volume: 0.75, shiftControl: 'auto', mode: 'demo', pedalLevel: 0.5, exhaustMode: 'sport' };
   try {
     const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
     if (!raw) return fallback;
@@ -43,6 +55,9 @@ function loadPrefs(): Prefs {
       vehicleId: typeof p.vehicleId === 'string' ? getVehicle(p.vehicleId).id : fallback.vehicleId,
       volume: typeof p.volume === 'number' && p.volume >= 0 && p.volume <= 1 ? p.volume : fallback.volume,
       shiftControl: p.shiftControl === 'manual' ? 'manual' : 'auto',
+      mode: p.mode === 'driving' ? 'driving' : 'demo',
+      exhaustMode: p.exhaustMode === 'comfort' || p.exhaustMode === 'track' ? p.exhaustMode : 'sport',
+      pedalLevel: typeof p.pedalLevel === 'number' && p.pedalLevel >= 0.1 && p.pedalLevel <= 1 ? p.pedalLevel : fallback.pedalLevel,
     };
   } catch {
     return fallback;
@@ -53,13 +68,16 @@ export class EngineController {
   readonly sim: EngineSimulator;
   readonly audio: AudioEngine;
   readonly gps: GpsTracker;
+  readonly motion = new MotionSensor();
+  private fusion = new SpeedFusion();
+  private wakeLock: { release(): Promise<void> } | null = null;
   private raf = 0;
   private lastFrame = 0;
   private lastUi = 0;
   private listeners = new Set<() => void>();
   private snapshot: UiSnapshot;
   private volume: number;
-  private gpsConsent = false;
+  private pedalLevel: number;
   private started = false;
   private disposed = false;
   private discreteKey = '';
@@ -69,14 +87,20 @@ export class EngineController {
     const prefs = loadPrefs();
     this.sim = new EngineSimulator(getVehicle(prefs.vehicleId));
     this.sim.setShiftControl(prefs.shiftControl);
+    if (prefs.mode === 'driving') this.sim.setMode('driving');
     this.audio = audio;
     this.gps = gps;
     this.volume = prefs.volume;
+    this.pedalLevel = prefs.pedalLevel;
+    this.audio.setExhaustMode(prefs.exhaustMode);
     this.audio.setVolume(this.volume);
     this.snapshot = this.buildSnapshot();
     this.cleanup.push(this.audio.onStatus(() => this.emit(true)));
     this.cleanup.push(this.gps.onStatus(() => this.emit(true)));
     this.installLifecycleGuards();
+    // Driving mode syncs to GPS as soon as it is selected — no separate connect step.
+    if (this.sim.state.mode === 'driving') this.gps.start();
+    this.cleanup.push(this.motion.onStatus(() => this.emit(true)));
   }
 
   // ───────────────────────── subscription (useSyncExternalStore) ─────────────────────────
@@ -102,7 +126,13 @@ export class EngineController {
       audioError: this.audio.lastError,
       gpsStatus: this.gps.status,
       gpsAccuracy: this.gps.accuracy,
-      gpsConsent: this.gpsConsent,
+      gpsStats: this.gps.stats,
+      gpsError: this.gps.lastError,
+      gpsLowAccuracy: this.gps.lowAccuracyMode,
+      motionStatus: this.motion.status,
+      motionConfidence: this.motion.confidence,
+      pedalLevel: this.pedalLevel,
+      exhaustMode: this.audio.currentExhaustMode,
       volume: this.volume,
       started: this.started,
     };
@@ -122,7 +152,14 @@ export class EngineController {
 
   private savePrefs(): void {
     try {
-      const prefs: Prefs = { vehicleId: this.sim.vehicle.id, volume: this.volume, shiftControl: this.sim.state.shiftControl };
+      const prefs: Prefs = {
+        vehicleId: this.sim.vehicle.id,
+        volume: this.volume,
+        shiftControl: this.sim.state.shiftControl,
+        mode: this.sim.state.mode,
+        pedalLevel: this.pedalLevel,
+        exhaustMode: this.audio.currentExhaustMode,
+      };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
     } catch {
       /* storage unavailable — preferences are optional */
@@ -150,7 +187,13 @@ export class EngineController {
 
   private frame(dt: number): void {
     const s = this.sim.state;
-    if (s.mode === 'driving') this.sim.setSpeedEstimate(this.gps.read());
+    if (s.mode === 'driving') {
+      const gps = this.gps.read();
+      // GPS teaches the motion sensor which way the phone faces; the sensor then
+      // gives near-instant acceleration while GPS keeps the speed honest.
+      if (gps.valid && gps.ageMs < 2000) this.motion.learn(gps.acceleration, Math.min(0.05, Math.max(0, dt)));
+      this.sim.setSpeedEstimate(this.fusion.update(dt, gps, this.motion.usable ? this.motion.acceleration : null));
+    }
     this.sim.step(dt);
     const events = this.sim.drainEvents();
     this.audio.update(this.sim.state);
@@ -170,7 +213,10 @@ export class EngineController {
         void this.audio.suspend();
       } else {
         if (this.started) void this.audio.resume();
-        if (this.sim.state.mode === 'driving' && this.gpsConsent) this.gps.start();
+        if (this.sim.state.mode === 'driving') {
+          this.gps.start();
+          if (this.started) void this.requestWakeLock();
+        }
         this.lastFrame = performance.now();
       }
       this.emit(true);
@@ -194,6 +240,7 @@ export class EngineController {
     const p = this.audio.init(this.sim.vehicle);
     this.audio.setVolume(this.volume);
     this.sim.start();
+    if (this.sim.state.mode === 'driving') this.startDrivingSensors();
     this.startLoop();
     this.emit(true);
     return p.then(
@@ -217,14 +264,13 @@ export class EngineController {
   async exit(): Promise<void> {
     this.sim.releaseThrottle();
     this.sim.stop();
-    this.disableGps();
+    this.stopDrivingSensors();
     this.started = false;
     this.emit(true);
     // Let the shutdown ramp play before closing the context.
     await new Promise((r) => setTimeout(r, 450));
     this.stopLoop();
     await this.audio.dispose();
-    this.sim.setMode('demo');
     this.emit(true);
   }
 
@@ -245,7 +291,9 @@ export class EngineController {
   setMode(mode: SimulationMode): void {
     if (mode === this.sim.state.mode) return;
     this.sim.setMode(mode);
-    if (mode === 'demo') this.disableGps();
+    if (mode === 'driving') this.startDrivingSensors();
+    else this.stopDrivingSensors();
+    this.savePrefs();
     this.emit(true);
   }
 
@@ -260,8 +308,31 @@ export class EngineController {
     this.emit(true);
   }
 
-  pressPedal(source: string): void {
-    this.sim.input.press(source);
+  /** Press (or move) a pedal source. Without a level it uses the selected gas amount. */
+  pressPedal(source: string, level?: number): void {
+    this.sim.input.press(source, level ?? this.pedalLevel);
+  }
+
+  setExhaustMode(mode: ExhaustMode): void {
+    this.audio.setExhaustMode(mode);
+    this.savePrefs();
+    this.emit(true);
+  }
+
+  get selectedPedalLevel(): number {
+    return this.pedalLevel;
+  }
+
+  /** Choose how much gas a pedal press gives. Applies at once to a pedal that is held. */
+  setPedalLevel(level: number, persist = true): void {
+    const v = Math.min(1, Math.max(0.1, level));
+    if (Math.abs(v - this.pedalLevel) < 0.005) {
+      if (persist) this.savePrefs();
+      return;
+    }
+    this.pedalLevel = v;
+    if (persist) this.savePrefs();
+    this.emit(true);
   }
   releasePedal(source: string): void {
     this.sim.input.release(source);
@@ -270,11 +341,27 @@ export class EngineController {
     this.sim.releaseThrottle();
   }
 
+  /**
+   * Paddle shifts. They work in any demo state, like paddles on a real car:
+   * from Free rev the first tap selects 1st gear, and in Auto a tap switches to Manual.
+   * The pedal is never touched, so you can keep the gas held while shifting.
+   */
   gearUp(): void {
+    const s = this.sim.state;
+    if (s.status !== 'running' || s.mode !== 'demo') return;
+    if (s.demoDrive === 'neutral') {
+      this.sim.setDemoDrive('drive');
+      this.emit(true);
+      return;
+    }
+    if (s.shiftControl === 'auto') this.sim.setShiftControl('manual');
     this.sim.shiftUp();
     this.emit(true);
   }
   gearDown(): void {
+    const s = this.sim.state;
+    if (s.status !== 'running' || s.mode !== 'demo' || s.demoDrive === 'neutral') return;
+    if (s.shiftControl === 'auto') this.sim.setShiftControl('manual');
     this.sim.shiftDown();
     this.emit(true);
   }
@@ -297,16 +384,35 @@ export class EngineController {
     this.emit(true);
   }
 
-  /** Called only from the explicit "Allow location" button in Driving Mode. */
-  enableGps(): void {
-    this.gpsConsent = true;
+  /** Call from a tap: iOS only grants the motion sensor inside a user gesture. */
+  private startDrivingSensors(): void {
     this.gps.start();
-    this.emit(true);
+    this.fusion.reset();
+    void this.motion.start().then(() => this.emit(true));
+    void this.requestWakeLock();
   }
 
-  disableGps(): void {
-    this.gpsConsent = false;
+  private stopDrivingSensors(): void {
     this.gps.stop();
+    this.motion.stop();
+    this.fusion.reset();
+    void this.wakeLock?.release().catch(() => undefined);
+    this.wakeLock = null;
+  }
+
+  /** Keep the phone screen on while driving (ignored where unsupported). */
+  private async requestWakeLock(): Promise<void> {
+    try {
+      const wl = (navigator as unknown as { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock;
+      if (wl && !this.wakeLock) this.wakeLock = await wl.request('screen');
+    } catch {
+      this.wakeLock = null;
+    }
+  }
+
+  /** The phone was moved in its mount: learn its direction again. */
+  recalibrateMotion(): void {
+    this.motion.recalibrate();
     this.emit(true);
   }
 
@@ -314,7 +420,7 @@ export class EngineController {
     this.disposed = true;
     this.stopLoop();
     this.sim.releaseThrottle();
-    this.gps.stop();
+    this.stopDrivingSensors();
     this.cleanup.forEach((fn) => fn());
     this.cleanup = [];
     this.listeners.clear();

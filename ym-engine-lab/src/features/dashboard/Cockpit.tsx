@@ -9,6 +9,7 @@ import { DrivingPanel } from '../driving-mode/DrivingPanel';
 import { Tachometer } from './Tachometer';
 import { msToKmh } from '../../utils/math';
 import type { SimulationMode } from '../../simulation/types';
+import type { ExhaustMode } from '../audio/AudioEngine';
 
 const STATUS_LABEL = { off: 'Engine off', cranking: 'Starting', running: 'Running', stopping: 'Shutting down' } as const;
 
@@ -45,7 +46,10 @@ export function Cockpit() {
     <main className="cockpit" style={{ '--accent': v.ui.accent, '--accent-soft': v.ui.accentSoft } as CSSProperties}>
       <header className="topbar">
         <span className="topbar__brand" aria-label={BRAND.name}>
-          <b>{BRAND.mark}</b> {BRAND.rest}
+          <b>{BRAND.mark}</b> {BRAND.rest} <small className="topbar__ver">
+            v{BRAND.version}
+            {BRAND.build ? ` · ${BRAND.build}` : ''}
+          </small>
         </span>
         <span className="topbar__vehicle">
           <strong>{v.displayName}</strong>
@@ -127,6 +131,18 @@ export function Cockpit() {
               {sim.launchActive ? ', launch demo' : ''}
               {demo ? '' : ', virtual gear'}
             </span>
+          </div>
+          <div className="gauge__controls">
+            <Segmented<ExhaustMode>
+              name="Exhaust mode"
+              value={snap.exhaustMode}
+              onChange={(m) => c.setExhaustMode(m)}
+              options={[
+                { value: 'comfort', label: 'Comfort' },
+                { value: 'sport', label: 'Sport' },
+                { value: 'track', label: 'Track' },
+              ]}
+            />
           </div>
           <button
             type="button"

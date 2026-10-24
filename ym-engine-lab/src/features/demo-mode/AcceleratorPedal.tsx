@@ -16,7 +16,23 @@ export function AcceleratorPedal({ disabled }: { disabled?: boolean }) {
     if (!active.current.has(id)) return;
     active.current.delete(id);
     c.releasePedal(`pointer:${id}`);
-    if (active.current.size === 0) setPressed(false);
+    if (active.current.size === 0) {
+      setPressed(false);
+      if (anchor.current) c.setPedalLevel(c.selectedPedalLevel, true); // remember a dragged amount
+      anchor.current = null;
+    }
+  };
+
+  // Where the finger first touched and the gas amount at that moment.
+  const anchor = useRef<{ y: number; level: number } | null>(null);
+
+  /** Dragging up from the touch point adds gas, down removes it (full pedal height = full range). */
+  const onMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!active.current.has(e.pointerId) || !anchor.current) return;
+    const h = e.currentTarget.getBoundingClientRect().height || 1;
+    const level = Math.min(1, Math.max(0.1, anchor.current.level + (anchor.current.y - e.clientY) / (h * 0.75)));
+    c.setPedalLevel(level, false);
+    c.pressPedal(`pointer:${e.pointerId}`, level);
   };
 
   const onDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
@@ -28,6 +44,7 @@ export function AcceleratorPedal({ disabled }: { disabled?: boolean }) {
       /* capture is optional */
     }
     active.current.add(e.pointerId);
+    anchor.current = { y: e.clientY, level: c.selectedPedalLevel };
     c.pressPedal(`pointer:${e.pointerId}`);
     setPressed(true);
   };
@@ -62,9 +79,10 @@ export function AcceleratorPedal({ disabled }: { disabled?: boolean }) {
       type="button"
       className={`pedal${pressed ? ' is-pressed' : ''}`}
       disabled={disabled}
-      aria-label="Accelerator. Press and hold to rev."
+      aria-label="Accelerator. Press to give the selected amount of gas; drag up or down to change it."
       aria-pressed={pressed}
       onPointerDown={onDown}
+      onPointerMove={onMove}
       onPointerUp={(e) => release(e.pointerId)}
       onPointerCancel={(e) => release(e.pointerId)}
       onLostPointerCapture={(e) => release(e.pointerId)}
@@ -89,7 +107,10 @@ export function AcceleratorPedal({ disabled }: { disabled?: boolean }) {
     >
       <span className="pedal__fill" aria-hidden="true" />
       <span className="pedal__grip" aria-hidden="true" />
-      <span className="pedal__label">Hold to rev</span>
+      <span className="pedal__label">
+        Press for gas
+        <small>Drag up or down to change</small>
+      </span>
     </button>
   );
 }

@@ -49,7 +49,11 @@ export function Diagnostics({ onClose }: { onClose: () => void }) {
     ['Secure context (HTTPS)', caps.secure ? 'Yes' : 'No — location will be blocked'],
     ['GPS', GPS_STATUS_LABEL[snap.gpsStatus]],
     ['GPS accuracy', snap.gpsAccuracy !== null ? `±${Math.round(snap.gpsAccuracy)} m` : '—'],
-    ['Motion sensor API', caps.motion ? 'Present (not used for sound)' : 'Not available'],
+    ['GPS last error', snap.gpsError ?? '—'],
+    ['GPS fixes received', String(snap.gpsStats.fixes)],
+    ['GPS update interval', snap.gpsStats.intervalMs === null ? '—' : `${(snap.gpsStats.intervalMs / 1000).toFixed(1)} s`],
+    ['Speed source', snap.gpsStats.speedSource === 'device' ? 'GPS-reported speed' : snap.gpsStats.speedSource === 'position' ? 'Position changes' : '—'],
+    ['Motion sensor', caps.motion ? `${snap.motionStatus}${snap.motionStatus === 'learning' ? ` (${Math.round(snap.motionConfidence * 100)}%)` : ''}` : 'Not available'],
     ['Touch input', yes(caps.touch)],
     ['Pointer events', yes(caps.pointer)],
     ['Viewport', `${vp.w} × ${vp.h} @${vp.dpr.toFixed(2)}x`],
@@ -77,8 +81,7 @@ export function Diagnostics({ onClose }: { onClose: () => void }) {
         {snap.audioError && <p className="diag__note">Audio note: {snap.audioError}</p>}
         {samples.failures.length > 0 && <p className="diag__note">Missing recordings: {samples.failures.join(', ')}</p>}
         <p className="diag__note">
-          The motion-sensor API is detected but not used: the screen’s orientation relative to the car is unknown, so its
-          readings can’t be turned into a reliable acceleration value.
+          The motion sensor is used only after it has learned, from GPS, which way the phone faces in the car.
         </p>
       </div>
     </div>

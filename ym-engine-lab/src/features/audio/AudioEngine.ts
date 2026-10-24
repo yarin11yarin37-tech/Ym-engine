@@ -27,6 +27,15 @@ export type VoiceKind = 'worklet' | 'oscillator-fallback' | 'none';
 
 export type AudioContextFactory = () => AudioContext;
 
+/** Exhaust valve / drive mode: how loud, raspy and poppy the exhaust is. */
+export type ExhaustMode = 'comfort' | 'sport' | 'track';
+
+const EXHAUST_MODES: Record<ExhaustMode, { level: number; drive: number; rasp: number; crackle: number; body: number }> = {
+  comfort: { level: 0.72, drive: 0.65, rasp: 0.5, crackle: 0.25, body: 0.85 },
+  sport: { level: 1, drive: 1, rasp: 1, crackle: 1, body: 1 },
+  track: { level: 1.12, drive: 1.4, rasp: 1.45, crackle: 1.7, body: 1.1 },
+};
+
 const defaultFactory: AudioContextFactory = () => {
   const Ctor: typeof AudioContext | undefined =
     typeof window !== 'undefined'
@@ -82,6 +91,8 @@ export class AudioEngine {
   private _status: AudioStatus = 'idle';
   private _voiceKind: VoiceKind = 'none';
   private volume = 0.8;
+  private exhaust = EXHAUST_MODES.sport;
+  private exhaustMode: ExhaustMode = 'sport';
   private listeners = new Set<(s: AudioStatus) => void>();
   private oneShots = new Set<AudioScheduledSourceNode>();
   private initPromise: Promise<void> | null = null;
@@ -406,7 +417,7 @@ export class AudioEngine {
           cylinders: p.cylinders,
           idleRpm: p.rpm.idle,
           limiterRpm: p.rpm.limiter,
-          crackle: a.crackle,
+          crackle: Math.min(1.5, a.crackle * this.exhaust.crackle),
         },
       });
     }
@@ -432,6 +443,18 @@ export class AudioEngine {
       this.samples = bank;
       bank.load().catch(() => undefined);
     }
+  }
+
+  /** Switch exhaust character. Pops are re-sent to the voice; levels follow on the next frame. */
+  setExhaustMode(mode: ExhaustMode): void {
+    if (!(mode in EXHAUST_MODES)) return;
+    this.exhaustMode = mode;
+    this.exhaust = EXHAUST_MODES[mode];
+    if (this.g && this.ctx && this.profile) this.applyProfile(this.profile);
+  }
+
+  get currentExhaustMode(): ExhaustMode {
+    return this.exhaustMode;
   }
 
   setVolume(v: number): void {
@@ -473,16 +496,17 @@ export class AudioEngine {
 
     // A — body
     setParam(g.bodyLP.frequency, 130 + 300 * n, now, 0.04);
-    setParam(g.bodyGain.gain, a.bodyLevel * (0.65 + 0.35 * load) * (1 - 0.45 * n) * sampleMix, now, 0.04);
+    const ex = this.exhaust;
+    setParam(g.bodyGain.gain, a.bodyLevel * ex.body * (0.65 + 0.35 * load) * (1 - 0.45 * n) * sampleMix, now, 0.04);
 
     // D — exhaust
-    const drive = 1 + a.exhaust.drive * (0.12 + 0.88 * load);
+    const drive = 1 + a.exhaust.drive * ex.drive * (0.12 + 0.88 * load);
     setParam(g.exDrive.gain, drive, now, 0.03);
     setParam(g.rasp.frequency, a.exhaust.raspFreq * (0.8 + 0.4 * n), now, 0.05);
-    setParam(g.rasp.gain, a.exhaust.raspGain * load * (0.3 + 0.7 * n), now, 0.05);
+    setParam(g.rasp.gain, a.exhaust.raspGain * ex.rasp * load * (0.3 + 0.7 * n), now, 0.05);
     const openness = 0.22 * n + 0.78 * load * Math.sqrt(n) + 0.15 * s.overrun;
     setParam(g.exLP.frequency, a.exhaust.lowpassBase + a.exhaust.lowpassRange * clamp(openness, 0, 1), now, 0.04);
-    const exLevel = (a.exhaust.level * (0.5 + 0.5 * load)) / (1 + 0.35 * (drive - 1));
+    const exLevel = (a.exhaust.level * ex.level * (0.5 + 0.5 * load)) / (1 + 0.35 * (drive - 1));
     setParam(g.exGain.gain, exLevel * sampleMix, now, 0.03);
 
     // B — harmonics

@@ -51,6 +51,10 @@ export class EngineSimulator {
   private speedEstimate: SpeedEstimate = { speed: 0, acceleration: 0, valid: false };
   private boostPeak = 0;
   private throttlePeak = 0;
+  /** Seconds the car has been at a steady speed (driving mode). */
+  private steadyFor = 0;
+  /** A paddle tap that arrived mid-shift; applied as soon as the shift ends. */
+  private pendingShift: 1 | -1 | 0 = 0;
 
   state: SimulationState;
 
@@ -157,7 +161,11 @@ export class EngineSimulator {
 
   shiftUp(): boolean {
     const s = this.state;
-    if (s.status !== 'running' || s.mode !== 'demo' || s.demoDrive !== 'drive' || s.shifting) return false;
+    if (s.status !== 'running' || s.mode !== 'demo' || s.demoDrive !== 'drive') return false;
+    if (s.shifting) {
+      this.pendingShift = 1;
+      return true;
+    }
     if (s.gear >= this.profile.gearRatios.length) return false;
     this.beginShift(s.gear + 1);
     return true;
@@ -165,7 +173,11 @@ export class EngineSimulator {
 
   shiftDown(): boolean {
     const s = this.state;
-    if (s.status !== 'running' || s.mode !== 'demo' || s.demoDrive !== 'drive' || s.shifting) return false;
+    if (s.status !== 'running' || s.mode !== 'demo' || s.demoDrive !== 'drive') return false;
+    if (s.shifting) {
+      this.pendingShift = -1;
+      return true;
+    }
     if (s.gear <= 1 || !isManualDownshiftSafe(this.profile, s.speed, s.gear - 1)) return false;
     this.beginShift(s.gear - 1);
     return true;
@@ -257,7 +269,13 @@ export class EngineSimulator {
     // Shift timing.
     if (s.shifting) {
       this.shiftTimer -= dt;
-      if (this.shiftTimer <= 0) s.shifting = false;
+      if (this.shiftTimer <= 0) {
+        s.shifting = false;
+        const queued = this.pendingShift;
+        this.pendingShift = 0;
+        if (queued === 1) this.shiftUp();
+        else if (queued === -1) this.shiftDown();
+      }
     }
 
     switch (s.status) {
@@ -436,9 +454,12 @@ export class EngineSimulator {
     const peakAccel = (100 / 3.6 / p.response.zeroToHundred) * 1.45;
     const available = peakAccel * (p.gearRatios[gearIdx - 1] / ratio1) * torqueCurve(p, s.rpm);
     const required = est.acceleration + DRAG_COEF * s.speed * s.speed + (s.speed > 0.5 ? ROLLING : 0);
-    const thrEstimate = est.acceleration < -0.35 ? 0 : clamp(required / Math.max(0.3, available), 0, 1);
+    const braking = est.acceleration < -0.3;
+    this.steadyFor = Math.abs(est.acceleration) < 0.3 ? this.steadyFor + dt : 0;
+    const thrEstimate = braking ? 0 : clamp(required / Math.max(0.3, available), 0, 1);
     // Throttle in driving mode is an *estimate* derived from motion, never the real pedal.
-    s.throttle = smoothToward(s.throttle, thrEstimate, dt, 0.35);
+    // Lifting / braking must cut the sound at once; building load can be a touch softer.
+    s.throttle = smoothToward(s.throttle, thrEstimate, dt, braking ? 0.05 : thrEstimate < s.throttle ? 0.1 : 0.22);
 
     if (s.speed < 0.6) {
       if (s.gear !== 1 && !s.shifting) s.gear = 1;
@@ -453,12 +474,15 @@ export class EngineSimulator {
         sinceLastShiftMs: this.sinceShiftMs,
         shifting: s.shifting,
       });
-      if (decision !== null && decision !== s.gear) this.beginShift(decision);
+      // Upshift only while accelerating, or after ~2 s of steady cruising —
+      // never while braking or in the moment right after lifting off.
+      const upshiftBlocked = decision !== null && decision > s.gear && est.acceleration < 0.25 && this.steadyFor < 2;
+      if (decision !== null && decision !== s.gear && !upshiftBlocked) this.beginShift(decision);
       const target = Math.max(coupledRpm(p, s.speed, Math.max(1, s.gear), s.throttle), idleTarget);
-      const tc = s.shifting ? Math.max(0.03, p.shift.durationMs / 1000 / 2.4) : 0.12;
+      const tc = s.shifting ? Math.max(0.03, p.shift.durationMs / 1000 / 2.4) : 0.08;
       s.rpm = smoothToward(s.rpm, Math.min(target, p.rpm.limiter), dt, tc);
     }
-    s.load = smoothToward(s.load, s.shifting && this.shiftDirection === 'up' ? 0.1 : s.throttle, dt, 0.08);
+    s.load = smoothToward(s.load, s.shifting && this.shiftDirection === 'up' ? 0.1 : s.throttle, dt, 0.05);
   }
 
   private stepCommon(dt: number, prevThrottle: number): void {

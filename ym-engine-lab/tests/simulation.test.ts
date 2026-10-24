@@ -5,6 +5,10 @@ import { decideAutoShift, downshiftRpm, isManualDownshiftSafe, upshiftRpm } from
 import { ThrottleInput, stepThrottle } from '../src/simulation/throttleInput';
 import { getVehicle, VEHICLES } from '../src/data/vehicles';
 import { smoothToward } from '../src/utils/math';
+import { SpeedEstimator } from '../src/features/driving-mode/speedEstimator';
+import { EngineController } from '../src/services/EngineController';
+import { AudioEngine } from '../src/features/audio/AudioEngine';
+import { GpsTracker } from '../src/features/driving-mode/gpsTracker';
 import { kmhToMs } from '../src/utils/math';
 
 const m5 = getVehicle('bmw-m5-competition');
@@ -98,6 +102,30 @@ describe('Accelerator release behavior', () => {
     expect(input.target).toBe(1);
     input.release('key:Space');
     expect(input.target).toBe(0);
+  });
+
+  it('a finger can hold a partial pedal and slide it up or down', () => {
+    const input = new ThrottleInput();
+    input.press('pointer:1', 0.4);
+    expect(input.target).toBeCloseTo(0.4, 6);
+    input.press('pointer:1', 0.8);
+    expect(input.target).toBeCloseTo(0.8, 6);
+    input.press('pointer:1', 0.2);
+    expect(input.target).toBeCloseTo(0.2, 6);
+    input.release('pointer:1');
+    expect(input.target).toBe(0);
+  });
+
+  it('partial pedal gives partial revs', () => {
+    const sim = runningSim();
+    sim.setDemoDrive('neutral');
+    sim.input.press('p', 0.35);
+    run(sim, 2);
+    const partial = sim.state.rpm;
+    sim.input.press('p', 1);
+    run(sim, 1);
+    expect(partial).toBeGreaterThan(m5.rpm.idle + 800);
+    expect(partial).toBeLessThan(sim.state.rpm - 1000);
   });
 
   it('releaseAll clears stuck sources and scripted overrides', () => {
@@ -340,5 +368,126 @@ describe('Driving mode', () => {
     sim.setShiftControl('manual');
     expect(sim.state.shiftControl).toBe('auto');
     expect(sim.shiftUp()).toBe(false);
+  });
+});
+
+describe('Driving mode responsiveness (GPS at 1 Hz)', () => {
+
+  function drive(profile: (t: number) => number, seconds: number, each: (t: number, sim: EngineSimulator) => void) {
+    const sim = runningSim();
+    sim.setMode('driving');
+    const est = new SpeedEstimator();
+    let nextFix = 0;
+    for (let t = 0; t < seconds; t += FRAME) {
+      if (t >= nextFix) {
+        est.addFix({ timestamp: t * 1000, latitude: 32, longitude: 34, accuracy: 5, speed: profile(t) });
+        nextFix += 1;
+      }
+      sim.setSpeedEstimate(est.read(t * 1000));
+      sim.step(FRAME);
+      each(t, sim);
+    }
+  }
+
+  it('cuts the throttle sound within ~1.5 s of hard braking', () => {
+    const cruise = kmhToMs(80);
+    const v = (t: number) => (t < 10 ? cruise : Math.max(0, cruise - 6 * (t - 10)));
+    let throttleAt = 1;
+    let overrunAt = 0;
+    drive(v, 11.6, (t, sim) => {
+      if (t > 11.5 && t < 11.52) {
+        throttleAt = sim.state.throttle;
+        overrunAt = sim.state.overrun;
+      }
+    });
+    expect(throttleAt).toBeLessThan(0.1);
+    expect(overrunAt).toBeGreaterThan(0);
+  });
+
+  it('never shifts up after the driver brakes', () => {
+    const v = (t: number) => (t < 8 ? kmhToMs(30) + 3 * t : Math.max(0, kmhToMs(30) + 24 - 6 * (t - 8)));
+    let gearAtBrake = 0;
+    let upAfterBrake = false;
+    let prev = 0;
+    drive(v, 12, (t, sim) => {
+      if (t >= 8 && gearAtBrake === 0) gearAtBrake = sim.state.gear;
+      if (t >= 8 && prev && sim.state.gear > prev) upAfterBrake = true;
+      prev = sim.state.gear;
+    });
+    expect(gearAtBrake).toBeGreaterThan(1);
+    expect(upAfterBrake).toBe(false);
+  });
+
+  it('builds load within ~1.5 s of accelerating', () => {
+    const v = (t: number) => (t < 8 ? kmhToMs(40) : kmhToMs(40) + 3.5 * (t - 8));
+    let loadAt = 0;
+    drive(v, 9.6, (t, sim) => {
+      if (t > 9.5 && t < 9.52) loadAt = sim.state.load;
+    });
+    expect(loadAt).toBeGreaterThan(0.25);
+  });
+});
+
+describe('Shifting with the gas held (demo)', () => {
+  it('a manual upshift keeps the pedal held and the engine pulls again after the shift', () => {
+    const sim = runningSim();
+    sim.setShiftControl('manual');
+    sim.input.press('pointer:1', 0.8);
+    run(sim, 2.5);
+    const before = sim.state.rpm;
+    expect(sim.shiftUp()).toBe(true);
+    run(sim, 0.1);
+    expect(sim.input.pressed).toBe(true);
+    expect(sim.state.rpm).toBeLessThan(before); // drops into the taller gear
+    run(sim, 1);
+    expect(sim.state.throttle).toBeGreaterThan(0.75);
+    expect(sim.state.gear).toBe(2);
+  });
+
+  it('a second tap during a shift is not lost', () => {
+    const sim = runningSim();
+    sim.setShiftControl('manual');
+    sim.input.press('p', 1);
+    run(sim, 2);
+    sim.shiftUp();
+    sim.step(FRAME);
+    expect(sim.shiftUp()).toBe(true); // arrives mid-shift
+    run(sim, 1);
+    expect(sim.state.gear).toBe(3);
+  });
+});
+
+describe('Paddles from the controller', () => {
+  const make = () => {
+    const c = new EngineController(
+      new AudioEngine(() => {
+        throw new Error('no audio in tests');
+      }),
+      new GpsTracker(undefined, true),
+    );
+    c.sim.start();
+    run(c.sim, 2);
+    return c;
+  };
+
+  it('from Free rev the first tap selects 1st gear', () => {
+    const c = make();
+    c.setDemoDrive('neutral');
+    c.gearUp();
+    expect(c.sim.state.demoDrive).toBe('drive');
+    expect(c.sim.state.gear).toBe(1);
+  });
+
+  it('in Auto a paddle tap switches to Manual and shifts', () => {
+    const c = make();
+    c.setShiftControl('auto');
+    c.pressPedal('pointer:1', 0.7);
+    run(c.sim, 1.5);
+    const g = c.sim.state.gear;
+    c.gearUp();
+    expect(c.sim.state.shiftControl).toBe('manual');
+    run(c.sim, 0.5);
+    expect(c.sim.state.gear).toBe(g + 1);
+    expect(c.sim.input.pressed).toBe(true);
   });
 });

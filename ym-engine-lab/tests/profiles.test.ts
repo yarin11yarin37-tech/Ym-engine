@@ -11,10 +11,10 @@ describe('Vehicle profile validation', () => {
     expect(r.valid).toBe(true);
   });
 
-  it('ships the eight required profiles', () => {
-    expect(VEHICLES).toHaveLength(8);
+  it('ships the eight required profiles plus the additions', () => {
+    expect(VEHICLES).toHaveLength(13);
     const names = VEHICLES.map((v) => v.displayName).join('|');
-    for (const n of ['M5', 'AMG GT', 'Huracán', 'V12', 'GT-R', 'Supra', 'Hellcat', '911 GT3']) expect(names).toContain(n);
+    for (const n of ['M5', 'AMG GT', 'Huracán', 'V12', 'GT-R', 'Supra', 'Hellcat', '911 GT3', 'M2', 'Golf GTI', 'RS3', 'Mustang GT', 'WRX STI']) expect(names).toContain(n);
   });
 
   it('catches inconsistent values', () => {

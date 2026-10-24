@@ -72,7 +72,7 @@ describe('Speed estimator — invalid sensor values', () => {
   it('flags poor accuracy and does not let it move the estimate', () => {
     const e = new SpeedEstimator({ maxAccuracyM: 30 });
     e.addFix(fix(1000, 10));
-    expect(e.addFix(fix(2000, 40, { accuracy: 120 }))).toBe('poor-accuracy');
+    expect(e.addFix(fix(2000, 40, { accuracy: 300 }))).toBe('poor-accuracy');
     expect(e.read(2000).speed).toBeLessThan(11);
   });
 
@@ -96,6 +96,39 @@ describe('Speed estimator — invalid sensor values', () => {
     const s = e.read(2000).speed;
     expect(s).toBeGreaterThan(10);
     expect(s).toBeLessThan(10 + 12);
+  });
+});
+
+describe('Speed estimator — real car browser conditions', () => {
+  const north = (m: number) => 32.08 + m / 111_195;
+
+  it('trusts device-reported speed even when the position radius is coarse', () => {
+    const e = new SpeedEstimator();
+    e.addFix(fix(1000, 20, { accuracy: 90 }));
+    expect(e.read(1500).valid).toBe(true);
+    expect(e.read(1500).speed).toBeCloseTo(20, 3);
+    expect(e.stats.speedSource).toBe('device');
+  });
+
+  it('measures city speed from positions at 1 Hz with ±15 m accuracy', () => {
+    const e = new SpeedEstimator();
+    const v = 30 / 3.6; // 30 km/h
+    for (let i = 0; i <= 8; i++) e.addFix(fix(1000 + i * 1000, null, { accuracy: 15, latitude: north(v * i) }));
+    const r = e.read(9000);
+    expect(r.valid).toBe(true);
+    expect(r.speed * 3.6).toBeGreaterThan(20);
+    expect(r.speed * 3.6).toBeLessThan(40);
+    expect(e.stats.speedSource).toBe('position');
+  });
+
+  it('keeps working when the browser only updates every 5 s', () => {
+    const e = new SpeedEstimator();
+    const v = 20;
+    for (let i = 0; i <= 4; i++) e.addFix(fix(1000 + i * 5000, null, { latitude: north(v * i * 5) }));
+    const r = e.read(21_000 + 4000);
+    expect(r.valid).toBe(true);
+    expect(r.speed).toBeGreaterThan(15);
+    expect(e.stats.intervalMs).toBeCloseTo(5000, 0);
   });
 });
 
@@ -144,7 +177,7 @@ describe('GPS tracker lifecycle', () => {
     f.emit(1000, 15);
     expect(t.status).toBe('connected');
     expect(t.read().valid).toBe(true);
-    now = 10_000;
+    now = 12_000;
     t.read();
     expect(t.status).toBe('lost');
     t.stop();
@@ -165,7 +198,71 @@ describe('GPS tracker lifecycle', () => {
     const f = fakeGeo();
     const t = new GpsTracker(f.geo, true, () => 1000);
     t.start();
-    f.emit(1000, 10, 200);
+    f.emit(1000, Number.NaN, 400);
     expect(t.status).toBe('poor-accuracy');
+  });
+
+  it('falls back to low accuracy after high-accuracy requests keep failing', () => {
+    const opts: PositionOptions[] = [];
+    let err: ((e: GeolocationPositionError) => void) | undefined;
+    let ok: ((p: GeolocationPosition) => void) | undefined;
+    const geo: GeolocationLike = {
+      watchPosition(s, e, o) {
+        ok = s;
+        err = e;
+        opts.push(o ?? {});
+        return opts.length;
+      },
+      clearWatch() {},
+    };
+    const t = new GpsTracker(geo, true, () => 1000, false);
+    t.start();
+    err?.({ code: 2, message: 'unavailable' } as GeolocationPositionError);
+    err?.({ code: 3, message: 'timeout' } as GeolocationPositionError);
+    expect(t.status).toBe('acquiring');
+    expect(t.lowAccuracyMode).toBe(true);
+    expect(opts[opts.length - 1].enableHighAccuracy).toBe(false);
+    expect(t.lastError).toContain('timeout');
+    ok?.({ timestamp: 0, coords: { latitude: 32, longitude: 34, accuracy: 30, speed: 10 } } as unknown as GeolocationPosition);
+    expect(t.status).toBe('connected');
+  });
+
+  it('gets positions by polling when watchPosition never fires', () => {
+    const geo: GeolocationLike = {
+      watchPosition: () => 7,
+      clearWatch() {},
+      getCurrentPosition(s) {
+        s({ timestamp: 0, coords: { latitude: 32, longitude: 34, accuracy: 10, speed: 15 } } as unknown as GeolocationPosition);
+      },
+    };
+    const t = new GpsTracker(geo, true, () => 5000, true);
+    t.start();
+    expect(t.status).toBe('connected');
+    expect(t.read().valid).toBe(true);
+    t.stop();
+  });
+
+  it('ignores the browser timestamp: drifted or repeated GPS clocks still count as fresh', () => {
+    let now = 50_000;
+    const f = fakeGeo();
+    const t = new GpsTracker(f.geo, true, () => now);
+    t.start();
+    // Browser reports a timestamp from an hour ago, then repeats it.
+    f.emit(now - 3_600_000, 12);
+    now += 1000;
+    f.emit(now - 3_600_000 - 1000, 13);
+    expect(t.read().valid).toBe(true);
+    expect(t.status).toBe('connected');
+  });
+
+  it('does not flag "lost" while waiting for the second fix', () => {
+    let now = 1000;
+    const f = fakeGeo();
+    const t = new GpsTracker(f.geo, true, () => now);
+    t.start();
+    f.emit(now, Number.NaN);
+    now += 500;
+    t.read();
+    expect(t.status).toBe('connected');
   });
 });

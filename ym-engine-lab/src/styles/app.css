@@ -424,6 +424,12 @@ button:disabled {
   font-style: italic;
   letter-spacing: 0;
 }
+.topbar__ver {
+  font-family: var(--font-ui);
+  letter-spacing: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-steel);
+}
 .topbar__vehicle {
   display: flex;
   flex-direction: column;
@@ -566,6 +572,14 @@ button:disabled {
   font-size: var(--fs-xs);
   color: var(--c-steel);
 }
+.gauge__controls {
+  width: min(100%, 360px);
+}
+.gauge__controls .segmented__opt {
+  min-height: 40px;
+  text-align: center;
+  align-items: center;
+}
 .power {
   min-height: 48px;
   padding: 0 var(--space-5);
@@ -614,7 +628,9 @@ button:disabled {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  touch-action: manipulation;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 .paddle span {
   font-family: var(--font-display);
@@ -664,16 +680,73 @@ button:disabled {
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
+.pedal__scale {
+  position: absolute;
+  top: 18px;
+  bottom: 56px;
+  right: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  pointer-events: none;
+}
+.pedal__scale i {
+  font-style: normal;
+  font-size: var(--fs-xs);
+  color: var(--c-steel);
+}
 .pedal__label {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
   text-align: center;
   font-family: var(--font-display);
   font-size: var(--fs-lg);
   font-weight: 600;
   color: var(--c-warm);
+}
+.pedal__label small {
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--c-steel-hi);
+}
+.gas {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.gas__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: var(--fs-sm);
+  color: var(--c-steel-hi);
+}
+.gas__head b {
+  font-family: var(--font-display);
+  font-size: var(--fs-xl);
+  color: var(--c-amber);
+  font-variant-numeric: tabular-nums;
+}
+.gas input {
+  width: 100%;
+  height: 36px;
+  accent-color: var(--c-amber);
+}
+.gas__presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+}
+.gas__presets .chip {
+  padding: 0;
 }
 .demo__actions {
   display: flex;
@@ -728,6 +801,14 @@ button:disabled {
 .drive__help {
   color: var(--c-steel-hi);
 }
+.drive__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  font-size: var(--fs-xs);
+  color: var(--c-steel);
+  font-variant-numeric: tabular-nums;
+}
 .gps {
   display: flex;
   align-items: center;
@@ -749,6 +830,9 @@ button:disabled {
 }
 .gps--bad i {
   background: var(--c-bad);
+}
+.gps--small {
+  font-size: var(--fs-lg);
 }
 .gps__acc {
   font-family: var(--font-ui);
@@ -880,5 +964,178 @@ button:disabled {
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;
+  }
+}
+
+/* Phone held sideways: one screen, Tesla-style cluster (no scrolling). */
+.drive .linkbtn {
+  align-self: flex-start;
+  text-align: left;
+}
+@media (orientation: landscape) and (max-height: 520px) {
+  .cockpit {
+    height: 100%;
+    min-height: 0;
+  }
+  .topbar {
+    flex-wrap: nowrap;
+    gap: var(--space-2);
+    padding: 6px max(12px, env(safe-area-inset-right, 0px)) 6px max(12px, env(safe-area-inset-left, 0px));
+  }
+  .topbar__brand,
+  .topbar .status,
+  .topbar .volume {
+    display: none;
+  }
+  .topbar__vehicle strong {
+    font-size: var(--fs-md);
+  }
+  .topbar__mode .segmented__opt {
+    min-height: 34px;
+    padding: 4px var(--space-2);
+  }
+  .topbar .btn {
+    min-height: 34px;
+    padding: 0 var(--space-3);
+  }
+  .banner {
+    margin: 6px 12px 0;
+    padding: 6px 12px;
+  }
+  .cluster {
+    grid-template-columns: minmax(130px, 0.75fr) minmax(0, calc(100vh - 110px)) minmax(210px, 1.1fr);
+    gap: var(--space-3);
+    padding: 6px max(12px, env(safe-area-inset-right, 0px)) 6px max(12px, env(safe-area-inset-left, 0px));
+    align-items: center;
+  }
+  .controls {
+    grid-column: auto;
+    min-height: 0;
+    max-height: calc(100vh - 70px);
+    overflow-y: auto;
+  }
+  .gauge {
+    order: 0;
+    gap: 6px;
+  }
+  .dial--live,
+  .gauge__center {
+    width: min(100%, calc(100vh - 150px));
+  }
+  .gear {
+    font-size: 2.8rem;
+  }
+  .gauge__rpm {
+    font-size: 0.6875rem;
+  }
+  .gauge__state {
+    display: none;
+  }
+  .gauge__controls .segmented__opt {
+    min-height: 30px;
+    padding: 2px 6px;
+  }
+  .power {
+    min-height: 34px;
+    padding: 0 var(--space-4);
+    font-size: var(--fs-sm);
+  }
+  .readouts {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  .speed b {
+    font-size: 2.6rem;
+  }
+  .readout__label,
+  .readout__detail {
+    font-size: var(--fs-xs);
+  }
+  .drive {
+    gap: 6px;
+  }
+  .gps {
+    font-size: var(--fs-md);
+  }
+  .gps--small {
+    font-size: var(--fs-sm);
+  }
+  .drive__help,
+  .drive__stats {
+    font-size: 0.6875rem;
+  }
+  .drive__note,
+  .drive__safety,
+  .demo__hint {
+    display: none;
+  }
+  .demo {
+    gap: 6px;
+  }
+  .demo__toggles {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .demo__toggles .segmented__opt {
+    min-height: 30px;
+    padding: 2px 8px;
+  }
+  .demo__toggles .segmented__opt span {
+    font-size: var(--fs-xs);
+  }
+  .gas__head,
+  .gas input {
+    display: none;
+  }
+  .gas__presets .chip {
+    min-height: 30px;
+    font-size: var(--fs-xs);
+  }
+  .demo__drive {
+    height: calc(100vh - 205px);
+    min-height: 140px;
+    gap: var(--space-2);
+  }
+  .demo__drive .paddles {
+    gap: 6px;
+  }
+  .demo__drive .paddle {
+    min-height: 0;
+  }
+  .demo__drive .pedal {
+    min-height: 0;
+    height: 100%;
+  }
+  .pedal__label {
+    bottom: 10px;
+    font-size: var(--fs-md);
+  }
+  .demo__actions .chip {
+    min-height: 30px;
+    padding: 0 var(--space-3);
+    font-size: var(--fs-xs);
+  }
+  .demo__toggles .segmented__opt small {
+    display: none;
+  }
+  .pedal {
+    min-height: 34vh;
+  }
+  .gas__head b {
+    font-size: var(--fs-md);
+  }
+  .gas input {
+    height: 26px;
+  }
+  .gas__presets .chip {
+    min-height: 32px;
+  }
+  .paddle {
+    min-height: 52px;
+    min-width: 64px;
+  }
+  .chip {
+    min-height: 38px;
   }
 }
