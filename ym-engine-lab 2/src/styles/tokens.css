@@ -1,0 +1,45 @@
+/* Design tokens — carbon, graphite, brushed steel, warm white, amber instrument light. */
+:root {
+  --c-carbon: #050607;
+  --c-graphite: #14161a;
+  --c-panel: #1a1d22;
+  --c-gunmetal: #2b2e34;
+  --c-line: #2f333a;
+  --c-steel: #8b919a;
+  --c-steel-hi: #b9bec6;
+  --c-warm: #f2ede4;
+  --c-amber: #f0a53a;
+  --c-amber-dim: #8a5a1d;
+  --c-ok: #6fcf97;
+  --c-bad: #ff6b5b;
+
+  --accent: #f0a53a;
+  --accent-soft: rgba(240, 165, 58, 0.15);
+
+  /* System condensed faces: nothing to download in the car. */
+  --font-display: 'Bahnschrift', 'DIN Alternate', 'Roboto Condensed', 'Arial Narrow', 'Helvetica Neue', system-ui, sans-serif;
+  --font-ui: 'Inter', 'Segoe UI', 'Roboto', 'Helvetica Neue', system-ui, sans-serif;
+
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.875rem;
+  --fs-md: 1rem;
+  --fs-lg: 1.25rem;
+  --fs-xl: 1.75rem;
+  --fs-2xl: 2.5rem;
+
+  --r-sm: 6px;
+  --r-md: 12px;
+  --r-lg: 20px;
+  --r-pill: 999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --tap: 56px; /* minimum target for in-car touch */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  color-scheme: dark;
+}
